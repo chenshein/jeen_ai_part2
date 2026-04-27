@@ -1,176 +1,158 @@
+# Document Indexing Pipeline (RAG)
 
-# Document Indexing Pipeline
+A RAG-style document indexing pipeline that converts PDF/DOCX files into searchable vector embeddings stored in PostgreSQL with `pgvector`.
 
-PDF/DOCX → Extract → Clean → Split into Sections → Classify & Chunk → Embed → PostgreSQL (pgvector)
+## Goal
 
----
+Build a RAG-style document indexing pipeline that converts documents into searchable vector embeddings stored in a database.
 
-## Pipeline Overview
+## How it works
 
-### 1) Extraction (`pipeline/extract.py`)
-- Supports `.pdf` and `.docx`
-- PDF: extracts text page-by-page and joins with page separators
-- DOCX: extracts paragraph text and joins into a single string
-
----
-
-### 2) Cleaning (`pipeline/clean.py`)
-- Unicode normalization (`NFKC`)
-- Removes control characters
-- Removes repeated headers/footers
-- Removes page-number-only lines
-- Normalizes whitespace while preserving structure
+1. **Extract** text from PDF / DOCX files
+2. **Clean** and preprocess the text (Unicode normalization, header/footer removal, whitespace)
+3. **Split** text into chunks — paragraph / sentence / fixed-size with overlap (chosen per section)
+4. **Embed** each chunk using the Gemini API (`gemini-embedding-001`, 768-dim)
+5. **Store** chunks + embeddings in PostgreSQL with metadata (source file, strategy, timestamps)
+6. **Secure** API keys using environment variables in `.env`
 
 ---
 
-## 3) Classify & Chunk (`pipeline/chunk.py`)
+## Installation
 
-The document is split into **sections first**, then each section is chunked independently.
-
----
-
-### 🔹 Section Splitting
-
-Sections are created using:
-
-- **Heading-based split (preferred)**
-  - Markdown headings (`# ...`)
-  - Title-case / ALL CAPS short lines
-
-- **Fallback: paragraph split**
-  - Split by double newlines (`\n\n`)
-  - Merge small fragments
-
-- **Special case: Q&A detection**
-  - If the whole document looks like Q&A → treated as one section
-
----
-
-### 🔹 Section Classification (per section)
-
-Each section is assigned a strategy:
-
-#### `sentence`
-Used when:
-- Q&A / FAQ style content
-- Bullet lists or independent short items
-
----
-
-#### `fixed`
-Used when:
-- Unstructured / OCR-like text
-- Weak sentence or paragraph boundaries
-
----
-
-#### `paragraph` (default)
-Used when:
-- Structured prose
-- Sentences form a coherent narrative
-
----
-
-### 🔹 Chunking Strategies
-
-#### Sentence strategy
-- Split into sentences
-- Q&A pairs are kept together
-- Sentences grouped up to `chunk_size`
-
----
-
-#### Paragraph strategy
-- Split by paragraphs (`\n\n`)
-- Merge small paragraphs
-- Oversized paragraphs are split into sentences
-- Supports Q1:/Q2: style FAQ structures
-
----
-
-#### Fixed-size strategy
-- Word-based splitting
-- Builds chunks up to `chunk_size`
-- Adds overlap between chunks for context continuity
-
----
-
-#### Overlap
-- Used only in fixed-size strategy
-- Preserves context between chunks (~12% default)
-
----
-
-## 4) Embedding (`pipeline/embed.py`)
-- Uses `gemini-embedding-001`
-- Produces 768-dimensional vectors
-- Batching for efficiency
-- Retries with exponential backoff
-
----
-
-## 5) Storage (`pipeline/db.py`)
-- PostgreSQL + pgvector
-- Ensures schema + vector index
-
-Stores per chunk:
-- `id` (UUID)
-- `filename`
-- `chunk_text`
-- `embedding (VECTOR(768))`
-- `split_strategy`
-- `created_at`
-
----
-
-## 6) Orchestration (`index_documents.py`)
-- Validates environment variables
-- Runs full pipeline:
-  - extract → clean → chunk → embed → store
-- Outputs JSON summary:
-  - total chunks
-  - strategy breakdown
-  - chunk previews
-
----
-
-
-## How to Run
-
-### 1) Start PostgreSQL (Docker)
+### 1) Start PostgreSQL with pgvector (Docker)
 
 ```bash
-
 docker compose up -d
-
 ```
 
-### 2) Install dependencies
+This launches the `pgvector/pgvector:pg16` image and binds host port **5433** to avoid colliding with a local Postgres install.
+
+### 2) Install Python dependencies
+
+**Windows:**
 
 ```bash
-
 python -m venv venv
-
 venv\Scripts\activate
-
 pip install -r requirements.txt
-
 ```
 
-### 3) Configure environment (`.env`)
+**macOS / Linux:**
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3) Configure environment
+
+Copy `.env.example` to `.env` and fill in your Gemini API key:
 
 ```env
-
-GEMINI_API_KEY=your_key
-
+GEMINI_API_KEY=your_key_here
 POSTGRES_URL=postgresql://vectoruser:vectorpass@localhost:5433/vectordb
-
 ```
 
-### 4) Index documents
+---
+
+## Usage
+
+### Index a document
 
 ```bash
+python index_documents.py file.docx
+```
 
-python index_documents.py file.pdf
+With options:
 
+```bash
+# Force a single chunking strategy across the whole document
+python index_documents.py file.pdf --strategy paragraph
+
+# Tune chunk size and overlap
+python index_documents.py file.pdf --chunk-size 800 --overlap-ratio 0.15
+```
+
+Available `--strategy` values: `auto` (default — per-section classification), `fixed`, `sentence`, `paragraph`.
+
+The script prints a JSON summary with total chunks, per-strategy breakdown, and chunk previews.
+
+---
+
+## Example
+
+```bash
+$ docker compose up -d
+$ python index_documents.py file.docx
+{
+  "filename": "file.docx",
+  "mode": "auto",
+  "chunk_size": 650,
+  "overlap": 78,
+  "total_chunks": 12,
+  "rows_written": 12,
+  "strategy_breakdown": {"sentence": 7, "paragraph": 5},
+  "sections_classified": 3,
+  "chunk_details": [
+    {
+      "chunk_index": 0,
+      "strategy": "sentence",
+      "section": 0,
+      "length_chars": 142,
+      "preview": "What is this system? It is a document indexing system..."
+    },
+    ...
+  ]
+}
+```
+
+---
+
+## PostgreSQL schema
+
+A single `documents` table:
+
+| column          | type           | description                                          |
+|-----------------|----------------|------------------------------------------------------|
+| `id`            | UUID           | deterministic per (filename, strategy, chunk_index)  |
+| `filename`      | TEXT           | source file name                                     |
+| `split_strategy`| TEXT           | `sentence-based` / `paragraph-based` / `fixed-size`  |
+| `chunk_text`    | TEXT           | text content of the chunk                            |
+| `embedding`     | VECTOR(768)    | Gemini embedding                                     |
+| `created_at`    | TIMESTAMPTZ    | insertion timestamp                                  |
+
+Index: `ivfflat` on `embedding` with `vector_cosine_ops` (`lists = 100`).
+
+Each chunk stores its **own** `split_strategy` because one document can produce chunks with mixed strategies (per-section classification).
+
+---
+
+## Chunking decision tree
+
+The pipeline splits each document into sections and classifies each section independently — one document can produce chunks with mixed strategies.
+
+- **Heading-based section split** — splits at markdown headings (`#`) or short title-case / ALL-CAPS lines; falls back to double-newline blocks otherwise.
+- **`sentence` strategy** — picked for Q&A pairs and lists of short independent items, where each unit is atomic and self-contained.
+- **`paragraph` strategy** *(default)* — picked for coherent prose where sentences build on each other within a paragraph.
+- **`fixed` strategy** — picked for unstructured / OCR / wall-of-text where sentence boundaries are unreliable; uses overlap (~12%) to preserve context across boundaries.
+- **Q&A vs FAQ distinction** — short atomic answers → `sentence`; long paragraph answers → `paragraph` (decided by Q/A-prefix line ratio and average answer length).
+- **Q&A pairing** — within a `sentence` section, each question is paired with its following answer so they never end up in different chunks.
+
+---
+
+## Project structure
+
+```
+.
+├── index_documents.py      # CLI entry point
+├── pipeline/
+│   ├── extract.py          # PDF / DOCX text extraction
+│   ├── clean.py            # text normalization
+│   ├── chunk.py            # per-section classification + chunking
+│   ├── embed.py            # Gemini embeddings (batched, retried)
+│   └── db.py               # pgvector connection, schema, storage
+├── docker-compose.yml      # pgvector/pg16 container
+├── requirements.txt
+└── .env.example
 ```

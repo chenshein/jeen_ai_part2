@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.idea/
+.vscode/
+.claude/
+.pytest_cache/
+.venv/
+venv/
+*.docx
+*.pdf
