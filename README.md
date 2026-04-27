@@ -1,10 +1,8 @@
+
 # Document Indexing Pipeline (RAG)
 
-A RAG-style document indexing pipeline that converts PDF/DOCX files into searchable vector embeddings stored in PostgreSQL with `pgvector`.
+A document indexing pipeline that converts PDF/DOCX files into searchable vector embeddings stored in PostgreSQL with `pgvector`.
 
-## Goal
-
-Build a RAG-style document indexing pipeline that converts documents into searchable vector embeddings stored in a database.
 
 ## How it works
 
@@ -64,18 +62,6 @@ POSTGRES_URL=postgresql://vectoruser:vectorpass@localhost:5433/vectordb
 python index_documents.py file.docx
 ```
 
-With options:
-
-```bash
-# Force a single chunking strategy across the whole document
-python index_documents.py file.pdf --strategy paragraph
-
-# Tune chunk size and overlap
-python index_documents.py file.pdf --chunk-size 800 --overlap-ratio 0.15
-```
-
-Available `--strategy` values: `auto` (default — per-section classification), `fixed`, `sentence`, `paragraph`.
-
 The script prints a JSON summary with total chunks, per-strategy breakdown, and chunk previews.
 
 ---
@@ -90,19 +76,45 @@ $ python index_documents.py file.docx
   "mode": "auto",
   "chunk_size": 650,
   "overlap": 78,
-  "total_chunks": 12,
-  "rows_written": 12,
-  "strategy_breakdown": {"sentence": 7, "paragraph": 5},
-  "sections_classified": 3,
+  "total_chunks": 4,
+  "rows_written": 4,
+  "strategy_breakdown": {
+    "sentence": 4
+  },
+  "sections_classified": 1,
   "chunk_details": [
     {
       "chunk_index": 0,
       "strategy": "sentence",
+      "justification": "Section contains Q&A pairs or independent factual statements. Each statement is self-contained and independently retrievable, so sentence-based splitting preserves atomic meaning units.",
       "section": 0,
-      "length_chars": 142,
-      "preview": "What is this system? It is a document indexing system..."
+      "length_chars": 54,
+      "preview": "What is this system? It is a document indexing system."
     },
-    ...
+    {
+      "chunk_index": 1,
+      "strategy": "sentence",
+      "justification": "Section contains Q&A pairs or independent factual statements. Each statement is self-contained and independently retrievable, so sentence-based splitting preserves atomic meaning units.",
+      "section": 0,
+      "length_chars": 57,
+      "preview": "How does it work? It extracts text and builds embeddings."
+    },
+    {
+      "chunk_index": 2,
+      "strategy": "sentence",
+      "justification": "Section contains Q&A pairs or independent factual statements. Each statement is self-contained and independently retrievable, so sentence-based splitting preserves atomic meaning units.",
+      "section": 0,
+      "length_chars": 60,
+      "preview": "Why is it useful? It enables semantic search over documents."
+    },
+    {
+      "chunk_index": 3,
+      "strategy": "sentence",
+      "justification": "Section contains Q&A pairs or independent factual statements. Each statement is self-contained and independently retrievable, so sentence-based splitting preserves atomic meaning units.",
+      "section": 0,
+      "length_chars": 46,
+      "preview": "Can it scale? Yes, it supports large datasets."
+    }
   ]
 }
 ```
@@ -122,7 +134,6 @@ A single `documents` table:
 | `embedding`     | VECTOR(768)    | Gemini embedding                                     |
 | `created_at`    | TIMESTAMPTZ    | insertion timestamp                                  |
 
-Index: `ivfflat` on `embedding` with `vector_cosine_ops` (`lists = 100`).
 
 Each chunk stores its **own** `split_strategy` because one document can produce chunks with mixed strategies (per-section classification).
 
