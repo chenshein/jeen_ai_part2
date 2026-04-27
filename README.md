@@ -1,6 +1,6 @@
 
 
-# Document Indexing Pipeline (RAG)
+# Document Indexing Pipeline 
 
 A document indexing pipeline that converts PDF/DOCX files into searchable vector embeddings stored in PostgreSQL with `pgvector`.
 
@@ -60,7 +60,7 @@ POSTGRES_URL=postgresql://vectoruser:vectorpass@localhost:5433/vectordb
 ### Index a document
 
 ```bash
-python index_documents.py file.docx
+python index_documents.py file3.docx
 ```
 
 The script prints a JSON summary with total chunks, per-strategy breakdown, and chunk previews.
